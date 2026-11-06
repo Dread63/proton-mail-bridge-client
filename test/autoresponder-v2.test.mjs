@@ -34,7 +34,7 @@ const collect = () => {
 test("rules decide, first match wins: a VIP gets another text, a domain a draft, a list nothing", async () => {
   await withService(async (service) => {
     await service.set({
-      enabled: true, body: "Away until {endsAt}.", endsAt: "2027-01-04T00:00:00Z",
+      enabled: true, body: "Away until {endsAt}.", endsAt: "2027-01-04T00:00:00Z", timezone: "UTC",
       rules: [
         { name: "boss", from: ["boss@example.com"], action: "reply", body: "Hi {senderFirstName}, urgent? Call my mobile." },
         { name: "client", from: ["*@client.example"], action: "draft" },
@@ -132,12 +132,25 @@ test("outsideHours: active at night and on weekends, not during working hours, i
 });
 
 test("placeholders are filled and unknown braces stay", () => {
-  const rule = { enabled: true, subject: "", body: "", replyEveryDays: 7, updatedAt: "", startsAt: "2026-12-24T00:00:00Z", endsAt: "2027-01-04T00:00:00Z" };
+  const rule = { enabled: true, subject: "", body: "", replyEveryDays: 7, updatedAt: "", startsAt: "2026-12-24T00:00:00Z", endsAt: "2027-01-04T00:00:00Z", timezone: "UTC" };
   assert.equal(
     renderText("Hi {senderFirstName} ({senderAddress}), re: {subject}. Back {endsAt}. {unknown}", rule, mail({ subject: "Re: Budget", from: [{ address: "al@x.org", name: "Al B" }] })),
     "Hi Al (al@x.org), re: Budget. Back 4 January 2027. {unknown}",
   );
   assert.equal(renderText("{senderFirstName}", rule, mail({ from: [{ address: "jan.nowak@x.org" }] })), "jan", "no display name: the first part of the address");
+});
+
+test("a plain end date is midnight where the rule is, not UTC midnight (west of UTC it was a day early)", async () => {
+  await withService(async (service) => {
+    const rule = await service.set({ body: "Back {endsAt}.", startsAt: "2026-12-24", endsAt: "2027-01-04", timezone: "America/Denver" });
+    assert.equal(rule.startsAt, "2026-12-24T07:00:00.000Z");
+    assert.equal(rule.endsAt, "2027-01-04T07:00:00.000Z", "Denver midnight is 07:00 UTC");
+    assert.equal(renderText(rule.body, rule, mail()), "Back 4 January 2027.");
+    const east = await service.set({ endsAt: "2027-07-01", timezone: "Asia/Tokyo" });
+    assert.equal(east.endsAt, "2027-06-30T15:00:00.000Z", "east of UTC the other way");
+    const exact = await service.set({ endsAt: "2027-01-04T18:00:00+01:00" });
+    assert.equal(exact.endsAt, "2027-01-04T17:00:00.000Z", "an exact time is kept as given");
+  });
 });
 
 test("rules are validated", async () => {
@@ -177,7 +190,7 @@ test("the log and summary say who wrote, what happened and why; a repeat is not 
 test("preview judges recent mail as if the rule were on, and records nothing", async () => {
   await withService(async (service) => {
     assert.deepEqual(await service.preview([mail()], OWN, {}, NOW), [], "no rule yet");
-    await service.set({ body: "Away until {endsAt}.", endsAt: "2027-01-04T00:00:00Z", rules: [{ name: "alice", from: ["alice@example.com"], action: "draft" }] });
+    await service.set({ body: "Away until {endsAt}.", endsAt: "2027-01-04T00:00:00Z", timezone: "UTC", rules: [{ name: "alice", from: ["alice@example.com"], action: "draft" }] });
     const decisions = await service.preview([mail({ internalDate: "2020-01-01T00:00:00Z", date: "2020-01-01T00:00:00Z" }), mail({ id: "n", messageId: "<n>", isAutomated: true })], OWN, {}, NOW);
     const byId = Object.fromEntries(decisions.map((d) => [d.id, d]));
     assert.equal(byId["INBOX::1"].outcome, "draft");

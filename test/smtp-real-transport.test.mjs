@@ -14,14 +14,16 @@ import { SMTPService, normalizeSendResult } from "../dist/services/smtp-service.
 // It exists so that a nodemailer upgrade is judged by what goes over the wire (envelope,
 // headers, MIME structure, result shape) and not only by whether the types still compile.
 
-function startFakeSmtp({ rejectRcpt = [], tlsCredentials } = {}) {
+// `starttls` (credentials) offers STARTTLS on a plain connection, as Bridge does; `commands` records every verb seen.
+function startFakeSmtp({ rejectRcpt = [], tlsCredentials, starttls } = {}) {
   const received = [];
-  const onConnection = (socket) => {
+  const commands = [];
+  const onConnection = (socket, upgraded = false) => {
     let buffer = "";
     let mode = "command"; // command | data | authUser | authPass | authPlain
     let session = { rcpt: [], from: undefined, auth: undefined, data: "" };
     const say = (line) => socket.write(`${line}\r\n`);
-    say("220 fake.example ESMTP");
+    if (!upgraded) say("220 fake.example ESMTP");
     socket.on("data", (chunk) => {
       buffer += chunk.toString("latin1");
       for (;;) {
@@ -45,8 +47,15 @@ function startFakeSmtp({ rejectRcpt = [], tlsCredentials } = {}) {
         if (mode === "authPlain") { const [, user, pass] = Buffer.from(line, "base64").toString().split("\0"); session.auth = { user, pass }; mode = "command"; say("235 2.7.0 Authentication successful"); continue; }
         const [verb, ...rest] = line.split(" ");
         const arg = rest.join(" ");
+        commands.push(verb.toUpperCase());
         switch (verb.toUpperCase()) {
-          case "EHLO": say("250-fake.example"); say("250-AUTH PLAIN LOGIN"); say("250 8BITMIME"); break;
+          case "EHLO": say("250-fake.example"); if (starttls && !upgraded) say("250-STARTTLS"); say("250-AUTH PLAIN LOGIN"); say("250 8BITMIME"); break;
+          case "STARTTLS":
+            if (!starttls || upgraded) { say("502 5.5.2 Command not recognized"); break; }
+            say("220 2.0.0 Ready to start TLS");
+            socket.removeAllListeners("data");
+            onConnection(new tls.TLSSocket(socket, { isServer: true, ...starttls }), true);
+            return;
           case "HELO": say("250 fake.example"); break;
           case "AUTH":
             if (/^PLAIN/i.test(arg)) { const inline = arg.split(" ")[1]; if (inline) { const [, user, pass] = Buffer.from(inline, "base64").toString().split("\0"); session.auth = { user, pass }; say("235 2.7.0 Authentication successful"); } else { mode = "authPlain"; say("334 "); } }
@@ -68,7 +77,7 @@ function startFakeSmtp({ rejectRcpt = [], tlsCredentials } = {}) {
     });
   };
   const server = tlsCredentials ? tls.createServer(tlsCredentials, onConnection) : net.createServer(onConnection);
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, received, port: server.address().port })));
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, received, commands, port: server.address().port })));
 }
 
 // A throwaway self-signed certificate, made at test time (nothing secret is committed).
@@ -91,8 +100,11 @@ const service = (port, secure = false) =>
     dataDir: "/tmp/smtp-real-transport-test", debug: false, runtime: {},
   });
 
-test("a real send: envelope, headers, MIME structure, inline image, authentication and the normalized result", async () => {
-  const { server, received, port } = await startFakeSmtp();
+const credentials = selfSignedCredentials();
+const needsOpenssl = { skip: credentials ? false : "openssl not available" };
+
+test("a real send: envelope, headers, MIME structure, inline image, authentication and the normalized result", needsOpenssl, async () => {
+  const { server, received, port } = await startFakeSmtp({ starttls: credentials });
   try {
     const result = await service(port).sendEmail({
       to: ["anna@example.com"], cc: ["cc@example.com"], bcc: ["hidden@example.com"],
@@ -135,8 +147,20 @@ test("a real send: envelope, headers, MIME structure, inline image, authenticati
   }
 });
 
-test("a rejected recipient is reported in the normalized result while the message still goes to the others", async () => {
-  const { server, received, port } = await startFakeSmtp({ rejectRcpt: ["nobody@example.com"] });
+// Something else on Bridge's port (it moves when another program holds 1025) must never get the password in cleartext.
+test("a server that does not offer STARTTLS is refused before any AUTH", async () => {
+  const { server, received, commands, port } = await startFakeSmtp();
+  try {
+    await assert.rejects(service(port).sendEmail({ to: ["a@example.com"], subject: "s", body: "b", isHtml: false, appendSignature: false }));
+    assert.equal(received.length, 0);
+    assert.ok(!commands.includes("AUTH"), `no AUTH may be sent, saw ${commands.join(",")}`);
+  } finally {
+    server.close();
+  }
+});
+
+test("a rejected recipient is reported in the normalized result while the message still goes to the others", needsOpenssl, async () => {
+  const { server, received, port } = await startFakeSmtp({ rejectRcpt: ["nobody@example.com"], starttls: credentials });
   try {
     const result = await service(port).sendEmail({ to: ["anna@example.com", "nobody@example.com"], subject: "s", body: "b", isHtml: false, appendSignature: false });
     assert.deepEqual(result.accepted, ["anna@example.com"]);

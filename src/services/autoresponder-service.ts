@@ -142,9 +142,19 @@ function emptyState(): AutoresponderState {
   return { version: 2, replies: {}, handled: [], daily: { date: "", count: 0 }, sentTotal: 0 };
 }
 
-function parseDate(value: string | undefined, name: string): string | undefined {
+// The UTC instant of midnight at the start of `day` (YYYY-MM-DD) in `timezone` (the host's zone when unset).
+// ponytail: one offset correction, exact except where a DST change happens at midnight (an hour off there).
+function zonedMidnight(day: string, timezone?: string): number {
+  const guess = Date.parse(`${day}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(guess));
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return guess - (Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second")) - guess);
+}
+
+/** A plain date names a day where the person is: midnight in the rule's time zone, not UTC midnight. */
+function parseDate(value: string | undefined, name: string, timezone?: string): string | undefined {
   if (value === undefined || value === "") return undefined;
-  const time = Date.parse(value);
+  const time = PLAIN_DATE.test(value) ? zonedMidnight(value, timezone) : Date.parse(value);
   if (!Number.isFinite(time)) throw new InvalidArgumentError(`${name} must be a date, for example 2026-12-24 or 2026-12-24T18:00:00+01:00.`);
   return new Date(time).toISOString();
 }
@@ -567,8 +577,6 @@ function mergePatch(before: AutoresponderRule | undefined, patch: AutoresponderP
     }
   }
   if (patch.backupContact !== undefined) next.backupContact = validateLine(patch.backupContact, "backupContact", 200);
-  if (patch.startsAt !== undefined) next.startsAt = parseDate(patch.startsAt, "startsAt");
-  if (patch.endsAt !== undefined) next.endsAt = parseDate(patch.endsAt, "endsAt");
   if (patch.replyEveryDays !== undefined) {
     if (!Number.isInteger(patch.replyEveryDays) || patch.replyEveryDays < 1 || patch.replyEveryDays > 90) {
       throw new InvalidArgumentError("replyEveryDays must be a whole number from 1 to 90.");
@@ -594,6 +602,9 @@ function mergePatch(before: AutoresponderRule | undefined, patch: AutoresponderP
       next.timezone = patch.timezone;
     }
   }
+  // After the time zone, which a plain date is read in.
+  if (patch.startsAt !== undefined) next.startsAt = parseDate(patch.startsAt, "startsAt", next.timezone);
+  if (patch.endsAt !== undefined) next.endsAt = parseDate(patch.endsAt, "endsAt", next.timezone);
   if (patch.outsideHours !== undefined) next.outsideHours = validateOutsideHours(patch.outsideHours);
   if (patch.dailyLimit !== undefined) {
     if (!Number.isInteger(patch.dailyLimit) || patch.dailyLimit < 1 || patch.dailyLimit > MAX_DAILY_LIMIT) {
