@@ -335,10 +335,12 @@ export function buildConfigFromEnv(): ProtonMailConfig {
   const embeddings = parseEmbeddingsEnv();
 
   logger.setDebugMode(debug);
-  if (isLocalBridgeHost(smtpHost)) {
+  // A pinned certificate (PROTONMAIL_TLS_CA_FILE) wins over the loopback relaxation, so there is nothing to warn about.
+  const pinned = Boolean(process.env.PROTONMAIL_TLS_CA_FILE?.trim());
+  if (!pinned && isLocalBridgeHost(smtpHost)) {
     logger.warn("TLS verification is disabled for local Bridge SMTP connections.", "MCPServer", { host: smtpHost });
   }
-  if (isLocalBridgeHost(imapHost)) {
+  if (!pinned && isLocalBridgeHost(imapHost)) {
     logger.warn("TLS verification is disabled for local Bridge IMAP connections.", "MCPServer", { host: imapHost });
   }
   const insecureHosts = parseHostList(process.env.PROTONMAIL_TLS_INSECURE_HOSTS);
