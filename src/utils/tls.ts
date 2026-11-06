@@ -22,13 +22,14 @@ type TlsRuntime = Pick<ProtonRuntimeConfig, "tlsCaFile" | "tlsInsecureHosts">;
 /** TLS options for a connection to `host`, or undefined to use Node's defaults (full verification). */
 export function tlsOptionsFor(host: string, runtime: TlsRuntime | undefined): Record<string, unknown> | undefined {
   const normalized = host.trim().toLowerCase();
-  if (isLocalBridgeHost(normalized) || runtime?.tlsInsecureHosts?.includes(normalized)) {
-    return { rejectUnauthorized: false };
-  }
   if (runtime?.tlsCaFile) {
     // Trust exactly this certificate. Bridge's is made for localhost, so the name check is skipped: the pinned
-    // certificate is the identity.
+    // certificate is the identity. A pin wins over the loopback relaxation: another local program can hold the port
+    // Bridge usually uses (Bridge then moves to the next free one), and without the pin the password goes to it.
     return { ca: readFileSync(runtime.tlsCaFile), checkServerIdentity: () => undefined };
+  }
+  if (isLocalBridgeHost(normalized) || runtime?.tlsInsecureHosts?.includes(normalized)) {
+    return { rejectUnauthorized: false };
   }
   return undefined;
 }

@@ -190,6 +190,14 @@ test("tlsOptionsFor: local hosts are relaxed, listed hosts too, a pinned certifi
   assert.equal(tlsOptionsFor("bridge.lan", undefined), undefined);
 });
 
+test("tlsOptionsFor: a pinned certificate wins over the loopback relaxation", async () => {
+  const caFile = join(await mkdtemp(join(tmpdir(), "pin-")), "bridge.pem");
+  writeFileSync(caFile, "PINNED");
+  const options = tlsOptionsFor("127.0.0.1", { tlsCaFile: caFile });
+  assert.equal(String(options.ca), "PINNED", "a pin on loopback must verify against it");
+  assert.equal(options.rejectUnauthorized, undefined, "and must not turn verification off");
+});
+
 // "localhost." (with the dot) resolves like localhost but is not on the built-in list, so it stands in for a Bridge
 // reached by another name.
 test("a Bridge reached by another name needs PROTONMAIL_TLS_INSECURE_HOSTS or a pinned certificate", { skip: !certificate || process.platform === "win32" }, async () => {

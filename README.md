@@ -767,7 +767,7 @@ PROTONMAIL_IDLE_WATCH='true'
 PROTONMAIL_IDLE_MAX_SECONDS='30'
 
 # Attachments
-PROTONMAIL_TLS_CA_FILE=''              # PEM file with Bridge's exported certificate: trusted when Bridge is reached by a name other than localhost (another container, another machine)
+PROTONMAIL_TLS_CA_FILE=''              # PEM file with Bridge's exported certificate: trusted for every Bridge connection, localhost included (recommended: another program can hold Bridge's usual port, and Bridge then moves to the next free one)
 PROTONMAIL_TLS_INSECURE_HOSTS=''      # comma-separated host names whose certificate is not verified, like localhost is (only for a private network you trust)
 PROTONMAIL_SHORTEN_LINKS='false'     # true = long tracking links in Markdown bodies become host/… (unsubscribe, confirm, reset links are kept)
 PROTONMAIL_MAX_INLINE_KB='40'         # in KB (older name PROTONMAIL_MAX_INLINE_BYTES still works, also in KB): largest attachment get_attachment_content returns inline as base64

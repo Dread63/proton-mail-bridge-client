@@ -271,6 +271,8 @@ export class SMTPService {
         host: this.config.smtp.host,
         port: this.config.smtp.port,
         secure: this.secure,
+        // Never fall back to a plaintext AUTH: a server that does not offer STARTTLS is refused (IMAP already insists).
+        requireTLS: !this.secure,
         auth: {
           user: this.config.smtp.username,
           pass: this.config.smtp.password,
